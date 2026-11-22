@@ -591,7 +591,7 @@ function renderMarkdown(src, hasLS) {
   const len = src.length;
   const toc = [];
   let excerpt = null;
-  let html = '';
+  const blocks = [];
   let ids = null;
   let pos = 0;
   while (pos <= len) {
@@ -624,7 +624,7 @@ function renderMarkdown(src, hasLS) {
           lines++;
           p = e2 + 1;
         }
-        html += '<pre><code' + (lang === '' ? '' : ' class="language-' + lang + '"') + '>' + (lines > 0 ? escRange(src, bs, be) + '\n' : '') + '</code></pre>\n';
+        blocks.push('<pre><code' + (lang === '' ? '' : ' class="language-' + lang + '"') + '>' + (lines > 0 ? escRange(src, bs, be) + '\n' : '') + '</code></pre>\n');
         pos = end;
         continue;
       }
@@ -635,13 +635,13 @@ function renderMarkdown(src, hasLS) {
       if (ids === null) ids = new Set();
       const id = uniqueSlug(slugify(text), ids);
       const h = inl(text, 0, text.length);
-      html += '<h' + depth + ' id="' + id + '">' + h + '</h' + depth + '>\n';
+      blocks.push('<h' + depth + ' id="' + id + '">' + h + '</h' + depth + '>\n');
       if (depth === 2 || depth === 3) toc.push({ level: depth, id, html: h });
       pos = le + 1;
       continue;
     }
     if ((c0 === 45 || c0 === 42) && isRule(src, ls, le)) {
-      html += '<hr>\n';
+      blocks.push('<hr>\n');
       pos = le + 1;
       continue;
     }
@@ -662,7 +662,7 @@ function renderMarkdown(src, hasLS) {
         }
         p = e2 + 1;
       }
-      html += any ? '<blockquote>\n<p>' + inl(text, 0, text.length) + '</p>\n</blockquote>\n' : '<blockquote>\n</blockquote>\n';
+      blocks.push(any ? '<blockquote>\n<p>' + inl(text, 0, text.length) + '</p>\n</blockquote>\n' : '<blockquote>\n</blockquote>\n');
       pos = p;
       continue;
     }
@@ -693,7 +693,7 @@ function renderMarkdown(src, hasLS) {
       }
       items += '<li>' + inl(cur, 0, cur.length) + '</li>\n';
       const tag = ordered ? 'ol' : 'ul';
-      html += (ordered && start !== 1 ? '<ol start="' + start + '">' : '<' + tag + '>') + '\n' + items + '</' + tag + '>\n';
+      blocks.push((ordered && start !== 1 ? '<ol start="' + start + '">' : '<' + tag + '>') + '\n' + items + '</' + tag + '>\n');
       pos = p;
       continue;
     }
@@ -726,10 +726,10 @@ function renderMarkdown(src, hasLS) {
     }
     const h = inl(text, 0, text.length);
     if (excerpt === null) excerpt = h;
-    html += '<p>' + h + '</p>\n';
+    blocks.push('<p>' + h + '</p>\n');
     pos = lastEnd + 1;
   }
-  return { html, toc, excerpt: excerpt === null ? '' : excerpt };
+  return { html: blocks.join(''), toc, excerpt: excerpt === null ? '' : excerpt };
 }
 
 // ------------------------------------------------------------------------------------------------ templates: parsing
