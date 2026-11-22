@@ -11,6 +11,10 @@ function isWs(c) {
   return c === 160 || c === 5760 || (c >= 8192 && c <= 8202) || c === 8232 || c === 8233 || c === 8239 || c === 8287 || c === 12288 || c === 65279;
 }
 
+/** 1 for the ASCII characters \s matches. */
+const WS = new Uint8Array(128);
+for (const c of [9, 10, 11, 12, 13, 32]) WS[c] = 1;
+
 /** Whether s[a, e) holds U+2028 or U+2029, the two characters (besides line feeds) a regex dot refuses. */
 function lsIn(s, a, e) {
   for (let i = a; i < e; i++) {
@@ -23,15 +27,12 @@ function lsIn(s, a, e) {
 /** The words of a text: its runs of characters other than whitespace. */
 function wordCount(s) {
   let n = 0;
-  let inWord = false;
+  let prev = 1; // 1 while the previous character was whitespace
   for (let i = 0, len = s.length; i < len; i++) {
     const c = s.charCodeAt(i);
-    const ws = c <= 32 ? c === 32 || (c >= 9 && c <= 13) : c >= 160 && isWs(c);
-    if (ws) inWord = false;
-    else if (!inWord) {
-      inWord = true;
-      n++;
-    }
+    const ws = c < 128 ? WS[c] : isWs(c) ? 1 : 0;
+    n += prev & (ws ^ 1);
+    prev = ws;
   }
   return n;
 }
@@ -982,42 +983,49 @@ function getter(baseFn, path, from, slot, root) {
   };
 }
 
-/** A part (a constant string or a function giving one) run. */
-const runPart = (p) => (typeof p === 'string' ? p : p());
+/**
+ * The output being built: a compiled part is a constant string or a function that pushes its text here (a page's text is
+ * the join of the buffer, so no page is a tree of concatenations).
+ */
+let W = [];
+
+/** A part run: its text pushed on the buffer. */
+const runPart = (p) => {
+  if (typeof p === 'string') W.push(p);
+  else p();
+};
 
 /** A sequence of parts as one part: adjacent constants merged. */
 function sequence(parts) {
-  const strs = [];
-  const fns = [];
-  let pending = '';
+  const items = [];
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i];
-    if (typeof p === 'string') pending += p;
-    else {
-      strs.push(pending);
-      fns.push(p);
-      pending = '';
-    }
+    if (typeof p === 'string') {
+      if (p === '') continue;
+      const last = items.length - 1;
+      if (last >= 0 && typeof items[last] === 'string') items[last] += p;
+      else items.push(p);
+    } else items.push(p);
   }
-  const m = fns.length;
-  if (m === 0) return pending;
-  const tail = pending;
-  if (m === 1) {
-    const s0 = strs[0];
-    const f0 = fns[0];
-    return () => s0 + f0() + tail;
-  }
-  if (m === 2) {
-    const s0 = strs[0];
-    const s1 = strs[1];
-    const f0 = fns[0];
-    const f1 = fns[1];
-    return () => s0 + f0() + s1 + f1() + tail;
+  const n = items.length;
+  if (n === 0) return '';
+  if (n === 1) return items[0];
+  if (n === 3 && typeof items[0] === 'string' && typeof items[1] !== 'string' && typeof items[2] === 'string') {
+    const a = items[0];
+    const f = items[1];
+    const b = items[2];
+    return () => {
+      W.push(a);
+      f();
+      W.push(b);
+    };
   }
   return () => {
-    let out = '';
-    for (let i = 0; i < m; i++) out += strs[i] + fns[i]();
-    return out + tail;
+    for (let i = 0; i < n; i++) {
+      const it = items[i];
+      if (typeof it === 'string') W.push(it);
+      else it();
+    }
   };
 }
 
@@ -1043,7 +1051,7 @@ function compileNode(n, cx) {
       const f = r.f;
       return () => {
         const v = f();
-        return esc(typeof v === 'string' ? v : textOf(v));
+        W.push(esc(typeof v === 'string' ? v : textOf(v)));
       };
     }
     case N_RAW: {
@@ -1052,7 +1060,7 @@ function compileNode(n, cx) {
       const f = r.f;
       return () => {
         const v = f();
-        return typeof v === 'string' ? v : textOf(v);
+        W.push(typeof v === 'string' ? v : textOf(v));
       };
     }
     case N_IF: {
@@ -1066,8 +1074,11 @@ function compileNode(n, cx) {
       const tp = n.not ? (n.else === null ? '' : compileNodes(n.else, cx)) : compileNodes(n.then, cx);
       const ep = n.not ? compileNodes(n.then, cx) : n.else === null ? '' : compileNodes(n.else, cx);
       const f = r.f;
-      if (typeof tp === 'string' && typeof ep === 'string') return () => (truthy(f()) ? tp : ep);
-      return () => (truthy(f()) ? runPart(tp) : runPart(ep));
+      if (typeof tp === 'string' && typeof ep === 'string') return () => void W.push(truthy(f()) ? tp : ep);
+      return () => {
+        if (truthy(f())) runPart(tp);
+        else runPart(ep);
+      };
     }
     case N_FOR: {
       const r = resolve(n.path, cx);
@@ -1090,24 +1101,20 @@ function compileNode(n, cx) {
       if (typeof body === 'string') {
         return () => {
           const xs = f();
-          if (!Array.isArray(xs)) return '';
-          let out = '';
-          for (let k = 0; k < xs.length; k++) out += body;
-          return out;
+          if (!Array.isArray(xs)) return;
+          for (let k = 0; k < xs.length; k++) W.push(body);
         };
       }
       return () => {
         const xs = f();
-        if (!Array.isArray(xs)) return '';
+        if (!Array.isArray(xs)) return;
         const len = xs.length;
-        let out = '';
         for (let k = 0; k < len; k++) {
           fE[slot] = xs[k];
           fK[slot] = k;
           fL[slot] = len;
-          out += body();
+          body();
         }
-        return out;
       };
     }
     default: {
@@ -1149,10 +1156,13 @@ function compileNode(n, cx) {
         const e = fE[slot];
         let out = cache.get(e);
         if (out === undefined) {
-          out = run();
+          const start = W.length;
+          run();
+          out = W.slice(start).join('');
+          W.length = start;
           cache.set(e, out);
         }
-        return out;
+        W.push(out);
       };
     }
   }
@@ -1167,7 +1177,11 @@ function renderTemplate(name, kind) {
     part = nodes === undefined ? null : compileNodes(nodes, { kind, frames: [], depth: 0, nd: 0, deps: newDeps() });
     compiled.set(key, part);
   }
-  return part === null ? null : runPart(part);
+  if (part === null) return null;
+  if (typeof part === 'string') return part;
+  W.length = 0;
+  part();
+  return W.join('');
 }
 
 // ------------------------------------------------------------------------------------------------ the build
