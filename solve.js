@@ -1209,6 +1209,30 @@ const dirOf = (path) => {
   return k === -1 ? '' : path.slice(0, k);
 };
 
+/** One Markdown source through the build; every field is declared here so all sources share one shape. */
+class Src {
+  constructor(path, text) {
+    this.path = path;
+    this.text = text;
+    this.d = null;
+    this.body = '';
+    this.hasLS = false;
+    this.post = false;
+    this.layout = '';
+    this.slug = '';
+    this.outDir = '';
+    this.url = '';
+    this.html = '';
+    this.toc = null;
+    this.excerpt = '';
+    this.newer = null;
+    this.older = null;
+    this.tagRefs = null;
+    this.link = undefined;
+    this.card = undefined;
+  }
+}
+
 /** A page's link record as templates read it. */
 function linkRecord(s) {
   if (s === null || s === undefined) return null;
@@ -1228,7 +1252,6 @@ function cardOf(s) {
       const t = s.tagRefs[i];
       tags[i] = { name: t.name, slug: t.slug, url: t.url };
     }
-    s.tagList = tags;
     s.card = {
       title: s.d.title,
       url: s.url,
@@ -1297,7 +1320,7 @@ export function run(input) {
     const f = files[i];
     if (f.path.endsWith('.md')) {
       const c = f.content;
-      sources.push({ path: f.path, text: c.indexOf('\r') === -1 ? c : c.replace(/\r\n?/g, '\n') });
+      sources.push(new Src(f.path, c.indexOf('\r') === -1 ? c : c.replace(/\r\n?/g, '\n')));
     } else {
       statics.push(f);
       staticPaths.add(f.path);

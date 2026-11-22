@@ -1,0 +1,8 @@
+{
+  "name": "makefun-site-fast",
+  "version": "1.0.0",
+  "description": "A fast drop-in for makefun-site 1.0.0: solve.js exports run(input), main.ts is the driver",
+  "type": "module",
+  "license": "MIT",
+  "private": true
+}
